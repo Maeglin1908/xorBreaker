@@ -1,12 +1,11 @@
 from bitstring import BitArray
 import base64
-from pprint import pprint
-import numpy as np
 from pwn import *
 import itertools
 import sys
+import string
 
-def score_frequences(text):
+def scoreFrequencies(data):
     frequences = {}
     frequences["A"] = 8.08
     frequences["B"] = 1.67
@@ -34,108 +33,99 @@ def score_frequences(text):
     frequences["X"] = 0.21
     frequences["Y"] = 1.65
     frequences["Z"] = 0.07
+    score = sum([frequences[c] for c in data.decode().upper() if c in frequences])
+    return score / len(data) 
+
+def scoreLetters(data):
+    letters = (string.ascii_letters + " ").encode()
+    return sum([x in letters for x in data]) / len(data)
+
+def forceToBytes(text):
+    if type(text) == str:
+        text = text.encode()
+    return text
+
+def bytesToBin(data):
+    return BitArray(bytes=force_to_bytes(data)).bin
+
+def xorBytes(b1, b2):
+    s1 = b1
+    s2 = b2
+    if len(s2) < len(s1):    
+        s2 = (s2 * (len(s1) // len(s2) +1))[:len(s1)]
+    return bytes([i^j for (i,j) in zip(s1, s2)])
+
+def hammingDistance(b1, b2):
+    return [bin(i).count('1') for i in xorBytes(b1, b2)][0]
+
+def keysizeScore(data, keysize):
+    nb_calc = len(data) // keysize -1
     score = 0
-    uniform_text = bytes(text).decode().upper()
-    c_count = 0
-    for c in bytes(text).decode().upper():
-        if c in frequences:
-            score += frequences[c]
-        if c != " ":
-            c_count += 1
-    return score / c_count
+    for i in range(nb_calc):
+        slice_1 = slice(keysize*i, keysize*(i+1))
+        slice_2= slice(keysize*(i+1), keysize*(i+2))
+        part_1 = data[slice_1]
+        part_2 = data[slice_2]
+        score += hammingDistance(part_1, part_2)
+    score /= keysize
+    score /= nb_calc
+    return score
 
-def bytes_to_bin(datas):
-    if type(datas) == str:
-        datas = datas.encode()
-    return BitArray(bytes=datas).bin
+def probableKeysize(data, keysize_min, keysize_max):
+    score = 1000000
+    probable_keysize = -1
+    for i in range(keysize_min, keysize_max):
+        tmp_score = keysizeScore(data, i)
+        if tmp_score < score:
+            score = tmp_score
+            probable_keysize = i
+    return probable_keysize
 
-def hammingDistance(datas, keysize, chunk_count = 2):
-    ar_chunks = []
-    for i in range(chunk_count):
-        chunk = bytes_to_bin(datas[i*keysize:(i+1)*keysize])    
-        chunk = [int(c) for c in chunk]
-        ar_chunks.append(chunk)
-    ar_chunks_transposed = np.array(ar_chunks).transpose()
-    hamming_bytes_invert = [all(chunk[0] == x for x in chunk) for chunk in ar_chunks_transposed]
-    hamming_bytes = [i==0 for i in hamming_bytes_invert]
-    return sum(hamming_bytes)
-
-def hammingDistanceNormalized(datas, keysize, chunk_count=2):
-    return hammingDistance(datas, keysize, chunk_count) / keysize
-
-def xor_single_bruteforce(encoded):
+def xorSingleByteBruteforce(data):
     printable = string.printable.encode()
-    possibles_keys = []
+    best_key = b''
+    best_score = 0
+    best_message = b""
     for i in range(0xff):
-        attempt = b''.join([chr(i^c).encode() for c in b''.join(encoded)])
-        if all([c in printable for c in attempt]):
-            possibles_keys.append(i)
-    return possibles_keys
+        key = chr(i).encode()
+        attempt = xorBytes(data, key * len(data))
+        if True: #all([c in printable for c in attempt]):
+            score = scoreLetters(attempt)
+            if score > best_score:
+                best_score = score
+                best_key = key
+                best_message = attempt
+    return best_key
 
-def attack_by_keysize(datas, keysize):
+def attack(data):
+    keysize = probableKeysize(raw_data, keysize_min, keysize_max)
     print("Attacking on keysized", str(keysize))
-    if type(datas) == str:
-        datas = datas.encode()
-    ar_chunks = [ [chr(c).encode() for c in datas[i:i+keysize]] for i in range(0, keysize*(len(datas)//keysize), keysize) ]
-    ar_chunks_transposed = np.array(ar_chunks).transpose()
-    probables_keys_for_combination = []
-    for i in range(len(ar_chunks_transposed)): #len() == keysize. so chunk_1 => key[0]
-        print("Chunk {} : {}".format(i, b''.join(ar_chunks_transposed[i]).hex()))
-        probables_keys = xor_single_bruteforce(ar_chunks_transposed[i])
-        keys_scores = {}
-        for pk in probables_keys:
-            xored_value = xor(b''.join(ar_chunks_transposed[i]), chr(pk).encode())
-            key_score = score_frequences(xored_value)
-            keys_scores[str(pk)] = key_score
-        keys_scores_sorted = sorted(keys_scores.items(), key=lambda x: x[1], reverse=True)
-        if len(keys_scores_sorted) == 0:
-            return
-        for j in range(min(len(keys_scores_sorted), 10)):
-            pk = int(keys_scores_sorted[j][0])
-            xored_value = xor(b''.join(ar_chunks_transposed[i]), pk)
-            print("Keysize {} : Position {} : Key : {} ({}) : Score : {} => {}".format(keysize, i, pk, chr(pk).encode(), round(keys_scores_sorted[j][1],3), xored_value))
-        checked_keys = input("What keys do seem probables ? (comma delimited, int -> 102,104, ...) (-1 to skip) > ").strip().split(',')
-        print(checked_keys, len(checked_keys))
-        if checked_keys[0] == '':
-            checked_keys.pop()
-            for x in range(min(len(keys_scores_sorted),3)):
-                checked_keys.append(keys_scores_sorted[x][0])
-        checked_keys = [int(x) for x in checked_keys]
-        if -1 in checked_keys:
-            return
-        probables_keys_for_combination.append(checked_keys)
+    chunks = [data[i::keysize] for i in range(keysize)]
+    final_key = b''
+    for chunk in chunks:
+#        print("Chunk : {}".format(chunk))
+        final_key += xorSingleByteBruteforce(chunk)
+    print("Key found : {}".format(final_key))
+    return xorBytes(data, final_key)
 
-    print("For keysize {},".format(keysize))
-    combinations = list(itertools.product(*probables_keys_for_combination))
-    [ ''.join([str(i) for i in k]) for k in combinations]
-    print("There is {} possibilities".format(len(list(itertools.product(*probables_keys_for_combination)))))
-    results = {}
-    for c in combinations:
-        combination = b''.join([chr(key_part).encode() for key_part in c])
-        xored_result = xor(datas, combination)
-        xored_result_score = round(score_frequences(xored_result),3)
-        results[(combination, xored_result[:100])] = xored_result_score
+keysize_min = 2
+keysize_max = 40
 
-    results_sorted = sorted(results.items(), key=lambda x: x[1])
-    for i in range(max(0, len(results_sorted)-20), len(results_sorted)):
-        combination = results_sorted[i][0][0]
-        score = results_sorted[i][1]
-        xored_value = results_sorted[i][0][1]
-        print("[hex] {} ({}): Score : {} => {}".format(combination.hex(), combination, score, xored_value))
+if len(sys.argv) < 2:
+    print("No file specified")
+    exit()
+ciphertext= open(sys.argv[1], 'r').read()
+raw_data = base64.b64decode(ciphertext)
+
+if len(sys.argv) == 3:
+    print("Require min AND max keysize guessing")
+    exit()
+if len(sys.argv) == 4:
+    keysize_min = int(sys.argv[2])
+    keysize_max = int(sys.argv[3])
+keysize_max = min(keysize_max, len(raw_data)//2)
+print("Datas read length : {}".format(len(raw_data)))
 
 
-datas = base64.b64decode(open(sys.argv[1], 'r').read())
-
-hammings_norm = {}
-for i in range(2,10):
-    hammings_norm[str(i)] = hammingDistanceNormalized(datas, i)
-    print("Keysize : {} ; score : {}".format(i, hammings_norm[str(i)]))
-
-sorted_hamming = sorted(hammings_norm.items(), key=lambda x: x[1])
-keysizes = []
-for i in range(min(len(sorted_hamming), 10)):
-    item = sorted_hamming[i]
-    keysizes.append(int(item[0]))
-
-for keysize in keysizes:
-    attack_by_keysize(datas[:200], keysize)
+result = attack(raw_data)
+print(result.decode()[:200])
