@@ -1,7 +1,7 @@
 from bitstring import BitArray
 import base64
 from pwn import *
-#import itertools
+import getopt
 import sys
 import string
 
@@ -66,39 +66,86 @@ def attackOnKeysize(data, keysize):
     final_key = b''.join([xorSingleByteBruteforce(chunk) for chunk in chunks])
     return {"key":final_key, "result":xorBytes(data, final_key)}
 
-def attack(data):
+def attack(data, keysize_min, keysize_max):
     score = 0
     best_obj = {"key":b'', "result":b''}
     p = log.progress("Working on ")
     for i in range(keysize_min+1, keysize_max+1):
         p.status("keysizes-range {}=>{}...".format(keysize_min, i))
-        keysize = probableKeysize(raw_data, keysize_min, i)
-        obj_result = attackOnKeysize(raw_data, keysize)
+        keysize = probableKeysize(data, keysize_min, i)
+        obj_result = attackOnKeysize(data, keysize)
         tmp_score = scoreLetters(obj_result["result"])
         if tmp_score > score:
             score = tmp_score
             best_obj = obj_result
     return best_obj
 
-keysize_min = 2
-keysize_max = 80
+def usage():
+    print("""Usage of XOR Breaker :
+    Example : 
+    {} --min 1 --max 10 --type text "OgwQEVQWGxsARVJULQoGVBwEBRFUARwaEUUEERgJUwAcDABUER0SGQQJFlRV"
 
-if len(sys.argv) < 2:
-    print("No file specified")
-    exit()
-ciphertext= open(sys.argv[1], 'r').read()
-raw_data = base64.b64decode(ciphertext)
+    -h : Print the current help
 
-if len(sys.argv) == 3:
-    print("Require min AND max keysize guessing")
-    exit()
-if len(sys.argv) == 4:
-    keysize_min = int(sys.argv[2])
-    keysize_max = int(sys.argv[3])
-keysize_max = min(keysize_max, len(raw_data)//2)
+    -m/--min (optional | default: 2)
+        -> set the minimum keysize
 
-print("Datas read length : {}".format(len(raw_data)))
+    -M/--max (optional | default: 80)
+        -> set the maximum keysize
+    
+    -t/--type (optional | default: file | values : file,text)
+        ->  set the type of input you give. 
+            It can be a file, or a text between quotes.
+            In case it's a text, it must be base64 encoded.
+    """.format(sys.argv[0]))
 
-found_result = attack(data)
-print("With the key (length {}) <{}>".format(len(found_result["key"]),found_result["key"]))
-print("Result (first 500 bytes) :\n\n{}".format(found_result["result"][:500].decode()))
+def main():
+    keysize_min = 2
+    keysize_max = 80
+    src_type = "file"
+    src = null
+    try:
+        opts, args = getopt.getopt(sys.argv[1:], "hm:M:t:", ["help", "min=", "max=", "type="])
+        for o, a in opts:
+            if o in ("-h", "--help"):
+                usage()
+                sys.exit()
+            elif o in ("-m", "--min"):
+                keysize_min = int(a)
+            elif o in ("-M", "--max"):
+                keysize_max = int(a)
+            elif o in ("-t", "--type"):
+                if a not in ("text", "file"):
+                    raise Exception("Misuse")
+                src_type = a
+            else:
+                assert False, "unhandled option"
+        
+        if len(args) != 1:
+            raise Exception("Source missing or too much arguments !")
+        if keysize_min > keysize_max:
+            raise Exception("Keysize_min > Keysize_max !")
+        src = args[0]
+    except Exception as exc:
+        print(exc.args[0])
+        usage()
+        sys.exit(2)
+    except getopt.GetoptError as err:
+        print(err)
+        usage()
+        sys.exit(2)
+
+
+    if src_type == "file":
+        ciphertext= open(src, 'r').read()
+    else:
+        ciphertext = src
+    raw_data = base64.b64decode(ciphertext)
+    keysize_max = min(keysize_max, len(raw_data)//2)
+    print("Datas read length : {}".format(len(raw_data)))
+    found_result = attack(raw_data, keysize_min, keysize_max)
+    print("With the key (length {}) <{}>".format(len(found_result["key"]),found_result["key"]))
+    print("Result (first 500 bytes) :\n\n{}".format(found_result["result"][:500].decode()))
+
+if __name__ == "__main__":
+    main()
