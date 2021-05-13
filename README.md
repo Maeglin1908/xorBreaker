@@ -1,7 +1,12 @@
 # xorBreaker
-Usage of XOR Breaker :
-    Example : 
+
+## Usage
+
+### Example
+
     {} --min 1 --max 10 --type text "OgwQEVQWGxsARVJULQoGVBwEBRFUARwaEUUEERgJUwAcDABUER0SGQQJFlRV"
+
+### Options
 
     -h : Print the current help
 
