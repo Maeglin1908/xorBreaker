@@ -97,19 +97,27 @@ def xorSingleByteBruteforce(data):
                 best_message = attempt
     return best_key
 
-def attack(data):
-    keysize = probableKeysize(raw_data, keysize_min, keysize_max)
-    print("Attacking on keysized", str(keysize))
+def attack_on_keysize(data, keysize):
     chunks = [data[i::keysize] for i in range(keysize)]
-    final_key = b''
-    for chunk in chunks:
-#        print("Chunk : {}".format(chunk))
-        final_key += xorSingleByteBruteforce(chunk)
-    print("Key found : {}".format(final_key))
-    return xorBytes(data, final_key)
+    final_key = b''.join([xorSingleByteBruteforce(chunk) for chunk in chunks])
+    return {"key":final_key, "result":xorBytes(data, final_key)}
+
+def attack(data):
+    score = 0
+    best_obj = {"key":b'', "result":b''}
+    p = log.progress("Working on ")
+    for i in range(keysize_min+1, keysize_max+1):
+        p.status("keysizes-range {}=>{}...".format(keysize_min, i))
+        keysize = probableKeysize(raw_data, keysize_min, i)
+        obj_result = attack_on_keysize(raw_data, keysize)
+        tmp_score = scoreLetters(obj_result["result"])
+        if tmp_score > score:
+            score = tmp_score
+            best_obj = obj_result
+    return best_obj
 
 keysize_min = 2
-keysize_max = 40
+keysize_max = 80
 
 if len(sys.argv) < 2:
     print("No file specified")
@@ -124,8 +132,9 @@ if len(sys.argv) == 4:
     keysize_min = int(sys.argv[2])
     keysize_max = int(sys.argv[3])
 keysize_max = min(keysize_max, len(raw_data)//2)
+
 print("Datas read length : {}".format(len(raw_data)))
 
-
-result = attack(raw_data)
-print(result.decode()[:200])
+found_result = attack(data)
+print("With the key (length {}) <{}>".format(len(found_result["key"]),found_result["key"]))
+print("Result (first 500 bytes) :\n\n{}".format(found_result["result"][:500].decode()))
