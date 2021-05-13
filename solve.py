@@ -1,40 +1,9 @@
 from bitstring import BitArray
 import base64
 from pwn import *
-import itertools
+#import itertools
 import sys
 import string
-
-def scoreFrequencies(data):
-    frequences = {}
-    frequences["A"] = 8.08
-    frequences["B"] = 1.67
-    frequences["C"] = 3.18
-    frequences["D"] = 3.99
-    frequences["E"] = 12.56
-    frequences["F"] = 2.17
-    frequences["G"] = 1.80
-    frequences["H"] = 5.27
-    frequences["I"] = 7.24
-    frequences["J"] = 0.14
-    frequences["K"] = 0.63
-    frequences["L"] = 4.04
-    frequences["M"] = 2.60
-    frequences["N"] = 7.38
-    frequences["O"] = 7.47
-    frequences["P"] = 1.91
-    frequences["Q"] = 0.09
-    frequences["R"] = 6.42
-    frequences["S"] = 6.59
-    frequences["T"] = 9.15
-    frequences["U"] = 2.79
-    frequences["V"] = 1.00
-    frequences["W"] = 1.89
-    frequences["X"] = 0.21
-    frequences["Y"] = 1.65
-    frequences["Z"] = 0.07
-    score = sum([frequences[c] for c in data.decode().upper() if c in frequences])
-    return score / len(data) 
 
 def scoreLetters(data):
     letters = (string.ascii_letters + " ").encode()
@@ -64,9 +33,7 @@ def keysizeScore(data, keysize):
     for i in range(nb_calc):
         slice_1 = slice(keysize*i, keysize*(i+1))
         slice_2= slice(keysize*(i+1), keysize*(i+2))
-        part_1 = data[slice_1]
-        part_2 = data[slice_2]
-        score += hammingDistance(part_1, part_2)
+        score += hammingDistance(data[slice_1], data[slice_2])
     score /= keysize
     score /= nb_calc
     return score
@@ -85,19 +52,16 @@ def xorSingleByteBruteforce(data):
     printable = string.printable.encode()
     best_key = b''
     best_score = 0
-    best_message = b""
     for i in range(0xff):
         key = chr(i).encode()
         attempt = xorBytes(data, key * len(data))
-        if True: #all([c in printable for c in attempt]):
-            score = scoreLetters(attempt)
-            if score > best_score:
-                best_score = score
-                best_key = key
-                best_message = attempt
+        score = scoreLetters(attempt)
+        if score > best_score:
+            best_score = score
+            best_key = key
     return best_key
 
-def attack_on_keysize(data, keysize):
+def attackOnKeysize(data, keysize):
     chunks = [data[i::keysize] for i in range(keysize)]
     final_key = b''.join([xorSingleByteBruteforce(chunk) for chunk in chunks])
     return {"key":final_key, "result":xorBytes(data, final_key)}
@@ -109,7 +73,7 @@ def attack(data):
     for i in range(keysize_min+1, keysize_max+1):
         p.status("keysizes-range {}=>{}...".format(keysize_min, i))
         keysize = probableKeysize(raw_data, keysize_min, i)
-        obj_result = attack_on_keysize(raw_data, keysize)
+        obj_result = attackOnKeysize(raw_data, keysize)
         tmp_score = scoreLetters(obj_result["result"])
         if tmp_score > score:
             score = tmp_score
